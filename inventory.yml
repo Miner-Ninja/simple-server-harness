@@ -1,0 +1,21 @@
+---
+# The server this copy manages. Where it is, and the private key Ansible
+# connects with, are not written out here: they come from the encrypted vault,
+# so a published copy does not say where to knock.
+#
+# Nothing here is yours to fill in: the address, the port and the private key
+# come from the encrypted vault, the login name from the settings.
+#
+# ansible_port is the port Ansible connects on now - 22 on a fresh server,
+# and the new port after the first run has moved sshd.
+# ansible_user: filled from server_user. Override it only for a first run
+#   as root on a bare server: ansible-playbook ... -e ansible_user=root
+all:
+  hosts:
+    server:
+      ansible_host: "{{ vault_server_host }}"
+      ansible_port: "{{ vault_ansible_port }}"
+      ansible_user: "{{ server_user }}"
+      ansible_ssh_private_key_file: "{{ vault_ssh_private_key_file }}"
+  vars:
+    ansible_python_interpreter: /usr/bin/python3

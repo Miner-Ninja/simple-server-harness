@@ -1,0 +1,69 @@
+---
+- name: Configure SWAP
+  hosts: all
+  become: true
+  vars:
+    swap_file: "/swapfile"
+  tasks:
+    - name: Check if the swap file exists
+      ansible.builtin.stat:
+        path: "{{ swap_file }}"
+        get_checksum: false
+      register: swap_file_state
+      changed_when: false
+
+    - name: List active swap devices
+      ansible.builtin.command: swapon --show=NAME --noheadings
+      register: swap_active
+      changed_when: false
+      failed_when: false
+
+    # Whole paths, not a substring search: "/swap/swapfile" is a different
+    # device from "/swapfile".
+    - name: Remember which swap devices are active
+      ansible.builtin.set_fact:
+        swap_active_devices: "{{ swap_active.stdout_lines | map('trim') | select | list }}"
+
+    - name: Create the swap file
+      ansible.builtin.command: fallocate -l {{ swap_size }} {{ swap_file }}
+      args:
+        creates: "{{ swap_file }}"
+      when: not swap_file_state.stat.exists
+
+    - name: Format the swap file
+      ansible.builtin.command: mkswap {{ swap_file }}
+      when: not swap_file_state.stat.exists
+
+    - name: Restrict permissions on the swap file
+      ansible.builtin.file:
+        path: "{{ swap_file }}"
+        owner: root
+        group: root
+        mode: "0600"
+      when: not swap_file_state.stat.exists
+
+    - name: Enable the swap file
+      ansible.builtin.command: swapon {{ swap_file }}
+      when: swap_file not in swap_active_devices
+
+    - name: Make the swap file permanent
+      ansible.builtin.lineinfile:
+        path: /etc/fstab
+        regexp: '^\s*{{ swap_file }}\s'
+        line: "{{ swap_file }} none swap sw 0 0"
+        state: present
+
+    - name: Set swappiness
+      ansible.posix.sysctl:
+        name: vm.swappiness
+        value: "{{ swappiness }}"
+        sysctl_file: /etc/sysctl.d/99-swappiness.conf
+        state: present
+        reload: true
+
+    - name: Report swap status
+      ansible.builtin.debug:
+        msg:
+          - "Swap file:  {{ swap_file }} ({{ swap_size }})"
+          - "Swappiness: {{ swappiness }}"
+          - "Created now: {{ not swap_file_state.stat.exists }}"

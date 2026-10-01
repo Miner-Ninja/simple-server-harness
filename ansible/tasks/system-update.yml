@@ -1,0 +1,124 @@
+---
+- name: Apply system updates
+  hosts: all
+  become: true
+  tasks:
+    - name: Wait for running apt processes to finish
+      ansible.builtin.shell: |
+        timeout 300 bash -c '
+        while fuser /var/lib/dpkg/lock-frontend >/dev/null 2>&1 ||
+              fuser /var/lib/dpkg/lock >/dev/null 2>&1 ||
+              fuser /var/cache/apt/archives/lock >/dev/null 2>&1 ||
+              pgrep -f "apt-get\|dpkg\|unattended-upgrade" >/dev/null 2>&1; do
+          echo "Waiting for apt/dpkg processes to finish... $(date)"
+          sleep 10
+        done'
+      changed_when: false
+      failed_when: false
+
+    - name: Update the package cache
+      ansible.builtin.apt:
+        update_cache: true
+        cache_valid_time: 0
+        force_apt_get: true
+      environment:
+        DEBIAN_FRONTEND: noninteractive
+        NEEDRESTART_MODE: a
+        NEEDRESTART_SUSPEND: "1"
+      register: apt_cache_update
+
+    - name: Count the upgradable packages
+      ansible.builtin.shell: apt list --upgradable 2>/dev/null | grep -c '\[upgradable from' || true
+      register: upgradable_count
+      changed_when: false
+
+    - name: Upgrade all packages
+      ansible.builtin.apt:
+        upgrade: true
+        force_apt_get: true
+        dpkg_options: force-confdef,force-confold
+      environment:
+        DEBIAN_FRONTEND: noninteractive
+        NEEDRESTART_MODE: a
+        NEEDRESTART_SUSPEND: "1"
+      register: apt_upgrade
+      timeout: "{{ update_timeout }}"
+      when: upgradable_count.stdout | int > 0
+
+    - name: Check whether a reboot is required
+      ansible.builtin.stat:
+        path: /var/run/reboot-required
+      register: reboot_required_file
+
+    - name: Read the packages that demand a reboot
+      ansible.builtin.slurp:
+        src: /var/run/reboot-required.pkgs
+      register: reboot_packages
+      when: reboot_required_file.stat.exists
+      failed_when: false
+
+    - name: Clean the package cache
+      ansible.builtin.apt:
+        autoclean: true
+        autoremove: true
+        force_apt_get: true
+      environment:
+        DEBIAN_FRONTEND: noninteractive
+
+    - name: Count the remaining security updates
+      ansible.builtin.shell: apt list --upgradable 2>/dev/null | grep -ci security || true
+      register: security_updates
+      changed_when: false
+
+    - name: Reboot if the system asks for it and automatic reboot is on
+      ansible.builtin.reboot:
+        msg: "Reboot by Ansible after system updates"
+        connect_timeout: 5
+        reboot_timeout: 300
+        pre_reboot_delay: 0
+        post_reboot_delay: 30
+        test_command: whoami
+      when:
+        - reboot_required_file.stat.exists
+        - auto_reboot | bool
+
+    - name: Warn about a pending manual reboot
+      ansible.builtin.debug:
+        msg:
+          - "MANUAL REBOOT REQUIRED"
+          - "Packages: {{ (reboot_packages.content | b64decode).split('\n') | reject('match', '^$') | list }}"
+          - "Run: sudo reboot - or set auto_reboot: true in group_vars/all/vars.yml"
+      when:
+        - reboot_required_file.stat.exists
+        - not (auto_reboot | bool)
+
+    - name: Write the update summary
+      ansible.builtin.copy:
+        dest: /var/log/ansible-system-update.log
+        mode: "0644"
+        content: |
+          ===== Ansible system update =====
+          Date:     {{ ansible_facts['date_time']['iso8601'] }}
+          Hostname: {{ ansible_facts['hostname'] }}
+
+          Cache updated:      {{ apt_cache_update.changed }}
+          Packages upgraded:  {{ apt_upgrade.changed | default(false) }}
+          Upgradable before:  {{ upgradable_count.stdout }}
+          Security updates:   {{ security_updates.stdout }}
+
+          Reboot required:    {{ reboot_required_file.stat.exists }}
+          Auto reboot:        {{ auto_reboot }}
+
+          OS:           {{ ansible_facts['distribution'] }} {{ ansible_facts['distribution_version'] }}
+          Kernel:       {{ ansible_facts['kernel'] }}
+          Architecture: {{ ansible_facts['architecture'] }}
+          Memory:       {{ ansible_facts['memtotal_mb'] }} MB
+      when: apt_upgrade is defined
+
+    - name: Report the update result
+      ansible.builtin.debug:
+        msg:
+          - "Upgraded:        {{ apt_upgrade.changed | default(false) }}"
+          - "Security left:   {{ security_updates.stdout }}"
+          - "Reboot required: {{ reboot_required_file.stat.exists }}"
+          - "Summary: /var/log/ansible-system-update.log"

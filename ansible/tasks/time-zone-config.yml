@@ -1,0 +1,24 @@
+---
+- name: Configure timezone
+  hosts: all
+  become: true
+  tasks:
+    - name: Read current timezone
+      ansible.builtin.command: timedatectl show --property=Timezone --value
+      register: current_timezone
+      changed_when: false
+
+    - name: Set timezone
+      ansible.builtin.command: timedatectl set-timezone {{ timezone }}
+      when: current_timezone.stdout | trim != timezone
+
+    - name: Read timezone back
+      ansible.builtin.command: timedatectl show --property=Timezone --value
+      register: timezone_after
+      changed_when: false
+
+    - name: Verify timezone
+      ansible.builtin.assert:
+        that: timezone_after.stdout | trim == timezone
+        fail_msg: "Timezone is {{ timezone_after.stdout | trim }} instead of {{ timezone }}"
+        success_msg: "Timezone is {{ timezone }}"

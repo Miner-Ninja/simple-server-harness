@@ -1,0 +1,195 @@
+---
+- name: Configure Fail2Ban
+  hosts: all
+  become: true
+  tasks:
+    - name: Wait for the apt lock to be released
+      ansible.builtin.shell: |
+        timeout 300 bash -c '
+        while fuser /var/lib/dpkg/lock-frontend >/dev/null 2>&1; do
+          echo "Waiting for apt lock..."
+          sleep 5
+        done'
+      changed_when: false
+
+    - name: Install Fail2Ban
+      ansible.builtin.apt:
+        name:
+          - fail2ban
+          - sendmail
+          - ufw
+        state: present
+        update_cache: true
+        cache_valid_time: 3600
+
+    - name: Back up the shipped jail.conf
+      ansible.builtin.copy:
+        src: /etc/fail2ban/jail.conf
+        dest: /etc/fail2ban/jail.conf.backup
+        remote_src: true
+        backup: true
+      failed_when: false
+
+    - name: Deploy jail.local
+      ansible.builtin.copy:
+        dest: /etc/fail2ban/jail.local
+        mode: "0644"
+        content: |
+          [DEFAULT]
+          bantime   = {{ fail2ban_bantime }}
+          findtime  = {{ fail2ban_findtime }}
+          maxretry  = {{ fail2ban_maxretry }}
+
+          destemail = {{ fail2ban_dest_email }}
+          sender    = {{ fail2ban_sender }}
+          mta       = sendmail
+
+          ignoreip  = {{ fail2ban_ignore_ip | join(' ') }}
+
+          action    = ufw
+
+          # Read the systemd journal instead of log files. Ubuntu does not
+          # always install rsyslog, so /var/log/auth.log and /var/log/syslog
+          # are not guaranteed to exist - and without them fail2ban refuses to
+          # start at all. The journal is always there.
+          backend   = systemd
+
+          logtarget = /var/log/fail2ban.log
+          loglevel  = INFO
+
+          # mode=ddos is not optional here. With passwords switched off, every
+          # failed attempt ends as "Connection closed by authenticating user
+          # <name> <address> ... [preauth]", and the filter's default mode
+          # treats that line as harmless on purpose. In ddos mode it counts.
+          [sshd]
+          enabled  = true
+          port     = {{ ssh_port }}
+          filter   = sshd[mode=ddos]
+          maxretry = {{ fail2ban_maxretry }}
+          bantime  = {{ fail2ban_bantime }}
+          findtime = {{ fail2ban_findtime }}
+
+          [portscan]
+          enabled      = true
+          filter       = portscan
+          journalmatch = _TRANSPORT=kernel
+          maxretry     = 6
+          bantime      = 86400
+      notify: Restart fail2ban
+
+    - name: Deploy the portscan filter
+      ansible.builtin.copy:
+        dest: /etc/fail2ban/filter.d/portscan.conf
+        mode: "0644"
+        content: |
+          [Definition]
+          failregex = kernel:.*TCP.*:{{ ssh_port }}.* IN=.*SRC=<HOST>.*
+          ignoreregex =
+      notify: Restart fail2ban
+
+    - name: Create the systemd override directory
+      ansible.builtin.file:
+        path: /etc/systemd/system/fail2ban.service.d
+        state: directory
+        mode: "0755"
+
+    - name: Harden the systemd unit
+      ansible.builtin.copy:
+        dest: /etc/systemd/system/fail2ban.service.d/override.conf
+        mode: "0644"
+        content: |
+          [Unit]
+          After=network.target ufw.service
+          Wants=network.target ufw.service
+
+          [Service]
+          Restart=on-failure
+          RestartSec=5
+
+          NoNewPrivileges=yes
+          PrivateDevices=yes
+          # Its own writable /tmp. The firewall tool needs one; without it the
+          # ban command reports success and applies nothing.
+          PrivateTmp=yes
+          ProtectHome=read-only
+          ProtectSystem=strict
+          # ProtectSystem=strict makes everything read-only, so every path the
+          # ban action touches has to be listed: /run for the tool's lock file,
+          # /etc/ufw for the rule it stores.
+          ReadWritePaths=/var/lib/fail2ban /var/run/fail2ban /var/log /run /etc/ufw
+      notify:
+        - Reload systemd
+        - Restart fail2ban
+
+    - name: Enable and start Fail2Ban
+      ansible.builtin.systemd_service:
+        name: fail2ban
+        state: started
+        enabled: true
+        daemon_reload: true
+
+    - name: Give Fail2Ban time to initialise
+      ansible.builtin.wait_for:
+        timeout: 10
+
+    - name: Deploy the management helper
+      ansible.builtin.copy:
+        dest: /usr/local/bin/fail2ban-manager
+        mode: "0755"
+        content: |
+          #!/bin/bash
+          # Fail2Ban management helper
+
+          case "$1" in
+            status)
+              echo "=== Fail2Ban Status ==="
+              fail2ban-client status
+              echo ""
+              echo "=== SSH Jail Status ==="
+              fail2ban-client status sshd
+              ;;
+            unban)
+              if [ -z "$2" ]; then
+                echo "Usage: fail2ban-manager unban <IP>"
+                exit 1
+              fi
+              fail2ban-client unban "$2"
+              echo "IP $2 unbanned from all jails"
+              ;;
+            banned)
+              echo "=== Currently Banned IPs ==="
+              fail2ban-client status sshd | grep "Banned IP list:" | cut -d: -f2
+              ;;
+            logs)
+              echo "=== Recent Fail2Ban Logs ==="
+              tail -50 /var/log/fail2ban.log
+              ;;
+            *)
+              echo "Usage: fail2ban-manager {status|unban <IP>|banned|logs}"
+              exit 1
+              ;;
+          esac
+
+    - name: Read the jail status
+      ansible.builtin.command: fail2ban-client status
+      register: fail2ban_status
+      changed_when: false
+
+    - name: Report the Fail2Ban state
+      ansible.builtin.debug:
+        msg:
+          - "Bantime:  {{ fail2ban_bantime }}s, findtime {{ fail2ban_findtime }}s, maxretry {{ fail2ban_maxretry }}"
+          - "Protected: sshd {{ ssh_port }}, portscan"
+          - "Alerts to: {{ fail2ban_dest_email }}"
+          - "{{ fail2ban_status.stdout_lines }}"
+          - "Helper: fail2ban-manager {status|banned|unban <IP>|logs}"
+
+  handlers:
+    - name: Reload systemd
+      ansible.builtin.systemd_service:
+        daemon_reload: true
+
+    - name: Restart fail2ban
+      ansible.builtin.systemd_service:
+        name: fail2ban
+        state: restarted

@@ -1,0 +1,172 @@
+---
+# Runs last: it moves the SSH port, so nothing may follow it that has to dial
+# the port from inventory.yml.
+#
+# Ubuntu 24.04 and newer start sshd through ssh.socket, and the socket owns the
+# listening port - sshd_config on its own is ignored. The port goes into both.
+- name: Harden SSH
+  hosts: all
+  become: true
+  vars:
+    ssh_config: /etc/ssh/sshd_config
+    ssh_socket_unit: ssh.socket
+    ssh_socket_dropin: /etc/systemd/system/ssh.socket.d/10-port.conf
+    ssh_service_unit: "{{ ssh_socket_unit if ssh_socket_active | default(false) | bool else 'ssh' }}"
+    ssh_allowed_users:
+      - "{{ server_user }}"
+    ssh_options:
+      - { key: Port, value: "{{ ssh_port }}" }
+      - { key: PermitRootLogin, value: "no" }
+      - { key: PasswordAuthentication, value: "no" }
+      - { key: PermitEmptyPasswords, value: "no" }
+      - { key: KbdInteractiveAuthentication, value: "no" }
+      - { key: KerberosAuthentication, value: "no" }
+      - { key: GSSAPIAuthentication, value: "no" }
+      - { key: HostbasedAuthentication, value: "no" }
+      - { key: MaxAuthTries, value: "{{ ssh_max_auth_tries }}" }
+      - { key: LoginGraceTime, value: "{{ ssh_login_grace_time }}" }
+      - { key: ClientAliveInterval, value: "{{ ssh_client_alive_interval }}" }
+      - { key: ClientAliveCountMax, value: "{{ ssh_client_alive_count_max }}" }
+      - { key: X11Forwarding, value: "no" }
+      - { key: AllowTcpForwarding, value: "no" }
+      - { key: AllowAgentForwarding, value: "no" }
+      - { key: StrictModes, value: "yes" }
+      - { key: Ciphers, value: "aes256-gcm@openssh.com,chacha20-poly1305@openssh.com,aes256-ctr,aes192-ctr,aes128-ctr" }
+      - { key: MACs, value: "hmac-sha2-256-etm@openssh.com,hmac-sha2-512-etm@openssh.com,hmac-sha2-256,hmac-sha2-512" }
+      - { key: KexAlgorithms, value: "curve25519-sha256,curve25519-sha256@libssh.org,ecdh-sha2-nistp521,ecdh-sha2-nistp384,ecdh-sha2-nistp256,diffie-hellman-group16-sha512" }
+  tasks:
+    - name: Back up the original sshd_config
+      ansible.builtin.copy:
+        src: "{{ ssh_config }}"
+        dest: "{{ ssh_config }}.orig"
+        remote_src: true
+        force: false
+        mode: "0600"
+
+    - name: Apply the hardening directives
+      ansible.builtin.lineinfile:
+        path: "{{ ssh_config }}"
+        regexp: "^#?{{ item.key }}\\s"
+        line: "{{ item.key }} {{ item.value }}"
+        state: present
+        validate: "sshd -t -f %s"
+      loop: "{{ ssh_options }}"
+      loop_control:
+        label: "{{ item.key }}"
+      register: ssh_directives
+
+    - name: Restrict login to that one account
+      ansible.builtin.lineinfile:
+        path: "{{ ssh_config }}"
+        regexp: "^#?AllowUsers\\s"
+        line: "AllowUsers {{ ssh_allowed_users | join(' ') }}"
+        state: present
+        validate: "sshd -t -f %s"
+      when: ssh_allowed_users | length > 0
+      register: ssh_allowusers
+
+    - name: Find out whether sshd is started by a systemd socket
+      ansible.builtin.command: systemctl is-enabled {{ ssh_socket_unit }}
+      register: ssh_socket_state
+      changed_when: false
+      failed_when: false
+
+    - name: Remember the detected start mode
+      ansible.builtin.set_fact:
+        ssh_socket_active: "{{ ssh_socket_state.rc == 0 and ssh_socket_state.stdout | trim != 'disabled' }}"
+
+    - name: Show the detected start mode
+      ansible.builtin.debug:
+        msg: >-
+          {{ 'Socket-activated sshd: the port is set on ' + ssh_socket_unit
+             if ssh_socket_active | bool
+             else 'Plain sshd service: the port is set in ' + ssh_config }}
+
+    - name: Create the socket drop-in directory
+      ansible.builtin.file:
+        path: "{{ ssh_socket_dropin | dirname }}"
+        state: directory
+        owner: root
+        group: root
+        mode: "0755"
+      when: ssh_socket_active | bool
+
+    - name: Point the socket at the hardened port
+      ansible.builtin.copy:
+        dest: "{{ ssh_socket_dropin }}"
+        owner: root
+        group: root
+        mode: "0644"
+        content: |
+          # Managed by simple-server-harness.
+          #
+          # The empty assignment drops the two addresses the package ships with.
+          # Both are then set again by hand: the package marks its IPv6 socket
+          # "ipv6-only", so a bare port number here would leave the machine
+          # listening on IPv6 alone and refuse everything over IPv4.
+          [Socket]
+          ListenStream=
+          ListenStream=0.0.0.0:{{ ssh_port }}
+          ListenStream=[::]:{{ ssh_port }}
+      when: ssh_socket_active | bool
+      register: ssh_socket_dropin_state
+
+    - name: Ensure the privilege separation directory exists
+      ansible.builtin.file:
+        path: /run/sshd
+        state: directory
+        owner: root
+        group: root
+        mode: "0755"
+
+    - name: Check the resulting configuration
+      ansible.builtin.command: sshd -t
+      changed_when: false
+
+    - name: Note whether anything actually changed
+      ansible.builtin.set_fact:
+        ssh_config_changed: >-
+          {{ (ssh_directives is changed)
+             or (ssh_allowusers is changed)
+             or (ssh_socket_dropin_state is changed) }}
+
+    - name: Make sure sshd is enabled and running
+      ansible.builtin.systemd_service:
+        name: "{{ ssh_service_unit }}"
+        state: started
+        enabled: true
+
+    # Restart, do not stop: stopping the socket takes ssh.service down with it
+    # and cuts the running connection.
+    - name: Restart sshd when the configuration changed
+      ansible.builtin.systemd_service:
+        name: "{{ ssh_service_unit }}"
+        state: restarted
+        daemon_reload: true
+      when: ssh_config_changed | bool
+
+    # Probes the port you will use next, so a missing port forward shows up.
+    - name: Confirm SSH answers on the hardened port
+      ansible.builtin.wait_for:
+        host: "{{ ansible_host }}"
+        port: "{{ ssh_port }}"
+        delay: 2
+        timeout: 60
+
+    # When the port stays 22 there is no move and no old port to close, so the
+    # note about moving has to stay quiet.
+    - name: Work out what the next run needs
+      ansible.builtin.set_fact:
+        ssh_next_step: >-
+          {{
+            ('Next run: set ansible_port: ' ~ ssh_port ~ ' in inventory.yml. Port 22 then closes by itself, once you connect on the new port.')
+            if ssh_port | string != '22'
+            else 'The port stays 22, so there is nothing to change.'
+          }}
+
+    - name: Report the hardening result
+      ansible.builtin.debug:
+        msg:
+          - "SSH listens on {{ ssh_port }}, keys only, no passwords, no root login"
+          - "Allowed users: {{ ssh_allowed_users | join(', ') }}"
+          - "{{ ssh_next_step }}"

@@ -1,0 +1,27 @@
+---
+# Run from the repository root:
+#   ansible-playbook ansible/ansible-tasks.yml
+#
+# Order matters. validate-config stops the run on incomplete settings.
+# ssh-config comes last because it moves the SSH port. system-update may reboot
+# the server, which is safe while SSH is still on the inventory port.
+
+- import_playbook: tasks/validate-config.yml
+- import_playbook: tasks/time-zone-config.yml
+- import_playbook: tasks/swap-config.yml
+- import_playbook: tasks/user-config.yml
+# Only one of these two does anything. With install_docker false both end
+# themselves; otherwise each ends itself when docker_rootless points at the
+# other.
+- import_playbook: tasks/docker-install.yml
+- import_playbook: tasks/docker-rootless-install.yml
+- import_playbook: tasks/firewall-config.yml
+- import_playbook: tasks/fail2ban-config.yml
+- import_playbook: tasks/system-update.yml
+- import_playbook: tasks/ssh-config.yml
+
+# Applications live in ansible/tasks/apps/ and get imported here, between the
+# base tasks above. They do not open their own firewall ports: add those to
+# extra_firewall_tcp_ports / extra_firewall_udp_ports in group_vars/all/vars.yml.
+#
+# - import_playbook: tasks/apps/example.yml

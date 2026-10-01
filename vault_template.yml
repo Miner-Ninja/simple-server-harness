@@ -1,0 +1,32 @@
+---
+# Copy these into the encrypted vault. Both commands ask for the password:
+#   ansible-vault create group_vars/all/vault.yml
+#   ansible-vault edit   group_vars/all/vault.yml
+#
+# This file sits outside group_vars/ for a reason: files there are read in
+# alphabetical order and the last one wins, so a plaintext template would
+# quietly override the real vault.
+
+# Where the server is and which private key Ansible connects with. Not written
+# where it could be published: knowing the address and the ports is most of
+# what an attack needs.
+vault_server_host: "203.0.113.10"
+vault_ssh_private_key_file: "/home/you/.ssh/id_ed25519"
+
+# The port Ansible connects on right now, and the port sshd moves to.
+# On a fresh server the first one is 22; after the first run put the new
+# port into it as well, so the next runs connect where sshd now listens.
+vault_ansible_port: 22
+vault_ssh_port: 22222
+
+# The account that will exist on the server, and the public key that goes to it.
+vault_server_user: "admin"
+vault_server_ssh_public_key_file: "/home/you/.ssh/id_ed25519.pub"
+
+# Login password of that account. SSH is key-only, so this is for console
+# access and for sudo.
+vault_server_password: ""
+
+# Where Fail2Ban sends its notices.
+vault_fail2ban_dest_email: ""
+vault_fail2ban_sender: ""

@@ -1,0 +1,167 @@
+---
+# The daemon runs as an ordinary user, so no sudo is needed to use Docker in
+# this mode - that is the whole point of it.
+#
+# Two things are easy to get wrong here. The setup script refuses to use
+# systemd when it is started through sudo without a real user session
+# (rootlesskit cannot reach the user's systemd), so the user manager is started
+# first from the root side and the script gets the runtime directory and the
+# bus address handed to it. And the rootless daemon reads its settings from the
+# user's home, not from /etc/docker.
+- name: Install Docker (rootless)
+  hosts: all
+  become: true
+  vars:
+    rootless_daemon_config:
+      log-driver: json-file
+      log-opts:
+        max-size: 10m
+        max-file: "3"
+  tasks:
+    - name: Skip when Docker is not wanted or should run system-wide
+      ansible.builtin.meta: end_play
+      when: not (install_docker | bool) or not (docker_rootless | bool)
+
+    - name: Set up the Docker repository and packages
+      ansible.builtin.import_tasks: docker-common.yml
+
+    - name: Install the rootless pieces
+      ansible.builtin.apt:
+        name:
+          - docker-ce-rootless-extras
+          - uidmap
+          - fuse-overlayfs
+          - slirp4netns
+          - dbus-user-session
+        state: present
+
+    - name: Give {{ server_user }} subordinate user and group ids
+      ansible.builtin.lineinfile:
+        path: "{{ item }}"
+        regexp: "^{{ server_user }}:"
+        line: "{{ server_user }}:100000:65536"
+        create: true
+        owner: root
+        group: root
+        mode: "0644"
+      loop:
+        - /etc/subuid
+        - /etc/subgid
+
+    # The packaged daemon starts on install and would sit on the same socket.
+    - name: Stop the system-wide daemon
+      ansible.builtin.systemd_service:
+        name: "{{ item }}"
+        state: stopped
+        enabled: false
+      loop:
+        - docker.service
+        - docker.socket
+      failed_when: false
+
+    - name: Take the system-wide socket away
+      ansible.builtin.file:
+        path: /var/run/docker.sock
+        state: absent
+
+    - name: Read the user id of {{ server_user }}
+      ansible.builtin.command: id -u {{ server_user }}
+      register: rootless_uid_raw
+      changed_when: false
+
+    - name: Remember where the user's runtime lives
+      ansible.builtin.set_fact:
+        rootless_uid: "{{ rootless_uid_raw.stdout | trim }}"
+        rootless_runtime: "/run/user/{{ rootless_uid_raw.stdout | trim }}"
+        rootless_env:
+          HOME: "/home/{{ server_user }}"
+          XDG_RUNTIME_DIR: "/run/user/{{ rootless_uid_raw.stdout | trim }}"
+          DBUS_SESSION_BUS_ADDRESS: "unix:path=/run/user/{{ rootless_uid_raw.stdout | trim }}/bus"
+
+    # Without lingering the daemon only exists while somebody is logged in.
+    - name: Keep the user manager running without a login
+      ansible.builtin.command: loginctl enable-linger {{ server_user }}
+      changed_when: false
+
+    - name: Start the user manager
+      ansible.builtin.systemd_service:
+        name: "user@{{ rootless_uid }}.service"
+        state: started
+
+    - name: Wait for the user's runtime directory
+      ansible.builtin.wait_for:
+        path: "{{ rootless_runtime }}"
+        timeout: 30
+
+    - name: Set up the rootless daemon for {{ server_user }}
+      ansible.builtin.command: dockerd-rootless-setuptool.sh install
+      become_user: "{{ server_user }}"
+      environment: "{{ rootless_env }}"
+      args:
+        creates: "/home/{{ server_user }}/.config/systemd/user/docker.service"
+
+    - name: Create the directory for the daemon settings
+      ansible.builtin.file:
+        path: "/home/{{ server_user }}/.config/docker"
+        state: directory
+        owner: "{{ server_user }}"
+        group: "{{ server_user }}"
+        mode: "0755"
+
+    - name: Write the daemon settings for {{ server_user }}
+      ansible.builtin.copy:
+        content: "{{ rootless_daemon_config | to_nice_json }}\n"
+        dest: "/home/{{ server_user }}/.config/docker/daemon.json"
+        owner: "{{ server_user }}"
+        group: "{{ server_user }}"
+        mode: "0644"
+      register: rootless_config_state
+
+    - name: Start the rootless daemon
+      ansible.builtin.command: systemctl --user start docker
+      become_user: "{{ server_user }}"
+      environment: "{{ rootless_env }}"
+      changed_when: false
+
+    - name: Restart the rootless daemon after a settings change
+      ansible.builtin.command: systemctl --user restart docker
+      become_user: "{{ server_user }}"
+      environment: "{{ rootless_env }}"
+      when: rootless_config_state is changed
+      changed_when: false
+
+    - name: Ask the daemon what it is
+      ansible.builtin.command: docker info
+      become_user: "{{ server_user }}"
+      environment: "{{ rootless_env }}"
+      register: rootless_info
+      changed_when: false
+
+    - name: Make sure it really is the rootless daemon
+      ansible.builtin.assert:
+        that:
+          - "'rootless' in rootless_info.stdout"
+          - "'Runtimes' in rootless_info.stdout"
+        fail_msg: >-
+          The daemon answered, but not as a rootless one. Check
+          `systemctl --user status docker` for {{ server_user }}.
+
+    - name: Read the versions as {{ server_user }}
+      ansible.builtin.command: "{{ item }}"
+      become_user: "{{ server_user }}"
+      environment: "{{ rootless_env }}"
+      register: rootless_versions
+      changed_when: false
+      loop:
+        - docker --version
+        - docker compose version
+
+    - name: Report the installation
+      ansible.builtin.debug:
+        msg:
+          - "{{ rootless_versions.results[0].stdout }}"
+          - "{{ rootless_versions.results[1].stdout }}"
+          - "Runs as {{ server_user }}, no sudo needed for docker"
+          - "Socket: {{ rootless_runtime }}/docker.sock"
+          - "Log rotation: 10 MB x 3 files"
+          - "Kept alive without a login session (lingering)"

@@ -1,0 +1,90 @@
+---
+# Settings for the server this copy manages, most important first.
+#
+# The values that would tell an attacker where to aim - the account name, the
+# port SSH moves to, the path to your public key - are not here. They live in
+# the encrypted group_vars/all/vault.yml and are picked up at the bottom of
+# this file. Create it, look inside, change it - each asks for the password:
+#   ansible-vault create group_vars/all/vault.yml
+#   ansible-vault view   group_vars/all/vault.yml
+#   ansible-vault edit   group_vars/all/vault.yml
+#
+# Nothing has a default, so the run stops if a value is missing or empty.
+
+# --- Root access --------------------------------------------------------
+# Ubuntu 25.10 and newer install the classic sudo under a different name -
+# sudo.ws - because the plain sudo there is another implementation, and Ansible
+# cannot use it.
+#   true  - on 25.10 and newer
+#   false - on 24.04 and older, where the plain sudo already is the classic one
+use_sudo_ws: true
+
+# --- SSH -----------------------------------------------------------------
+# When this has run, nobody gets in over SSH as root any more - from any
+# address - and nobody gets in with a password either. The way in is the
+# account from the vault, with its key.
+#
+# Rarely worth changing here: how many attempts a session gets, how long to
+# wait for a login, and when to drop a silent connection.
+ssh_max_auth_tries: 6
+ssh_login_grace_time: 60
+ssh_client_alive_interval: 300
+ssh_client_alive_count_max: 3
+
+# --- Server basics ------------------------------------------------------
+# Like "Europe/Berlin". The full list: timedatectl list-timezones
+timezone: "UTC"
+
+# Swap file, and how eagerly the kernel uses it.
+swap_size: "2G"
+swappiness: 10
+
+# --- Docker -------------------------------------------------------------
+# Install Docker at all? false skips both Docker playbooks completely, for a
+# server that runs nothing containerised. The switch below is then ignored.
+install_docker: true
+
+# Run the daemon as server_user instead of system-wide?
+#   false - system daemon, every docker command goes through sudo
+#   true  - the daemon belongs to server_user, no sudo at all
+# Nobody is added to the docker group either way: that group is root without a
+# password.
+docker_rootless: false
+
+# --- Application ports --------------------------------------------------
+extra_firewall_tcp_ports:
+extra_firewall_udp_ports:
+
+# --- Fail2Ban -----------------------------------------------------------
+# How long to ban, over what window, after how many failures.
+#   bantime  - how long an address stays blocked, seconds
+#   findtime - the window the failures are counted over, seconds
+#   maxretry - how many failures inside that window trigger the ban
+fail2ban_bantime: 3600
+fail2ban_findtime: 600
+fail2ban_maxretry: 5
+
+# Networks that are never blocked.
+fail2ban_ignore_ip:
+  - "127.0.0.1/8"
+  - "::1"
+
+# --- System updates -----------------------------------------------------
+# auto_reboot - reboot the server itself when an update demands it.
+# update_timeout - how long the upgrade may take, seconds.
+auto_reboot: false
+update_timeout: 600
+
+# --- Taken from the vault. Do not edit ----------------------------------
+# Set in group_vars/all/vault.yml instead, so that a published copy does not
+# hand out the login name, the port or your home path.
+server_user: "{{ vault_server_user }}"
+ssh_port: "{{ vault_ssh_port }}"
+server_ssh_public_key_file: "{{ vault_server_ssh_public_key_file }}"
+
+# No separate become password: sudo asks for the login password, so
+# vault_server_password covers both.
+ansible_become_exe: "{{ 'sudo.ws' if use_sudo_ws | bool else 'sudo' }}"
+ansible_become_password: "{{ vault_server_password }}"
+fail2ban_dest_email: "{{ vault_fail2ban_dest_email }}"
+fail2ban_sender: "{{ vault_fail2ban_sender }}"

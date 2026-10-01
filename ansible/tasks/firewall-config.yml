@@ -1,0 +1,96 @@
+---
+- name: Configure UFW firewall
+  hosts: all
+  become: true
+  vars:
+    ssh_block_comment: "SSH access"
+    # The settings are written as one comma-separated line, so turn them into
+    # a list here. An empty line means no ports.
+    application_tcp_ports: "{{ (extra_firewall_tcp_ports | default('', true) | string).split(',') | map('trim') | select | list }}"
+    application_udp_ports: "{{ (extra_firewall_udp_ports | default('', true) | string).split(',') | map('trim') | select | list }}"
+  tasks:
+    - name: Wait for the apt lock to be released
+      ansible.builtin.shell: |
+        timeout 300 bash -c '
+        while fuser /var/lib/dpkg/lock-frontend >/dev/null 2>&1 ||
+              fuser /var/lib/dpkg/lock >/dev/null 2>&1 ||
+              fuser /var/cache/apt/archives/lock >/dev/null 2>&1; do
+          echo "Waiting for apt lock..."
+          sleep 10
+        done'
+      changed_when: false
+
+    - name: Install UFW
+      ansible.builtin.apt:
+        name: ufw
+        state: present
+        update_cache: true
+
+    # The rule set is rebuilt from scratch every run, so a port taken out of
+    # the configuration really disappears - and rules made by hand are lost.
+    - name: Reset UFW to defaults
+      ansible.builtin.command: ufw --force reset
+      changed_when: false
+      failed_when: false
+
+    - name: Set UFW default policies
+      community.general.ufw:
+        direction: "{{ item.direction }}"
+        policy: "{{ item.policy }}"
+      loop:
+        - { direction: incoming, policy: deny }
+        - { direction: outgoing, policy: allow }
+        - { direction: routed, policy: deny }
+
+    - name: Allow the hardened SSH port
+      community.general.ufw:
+        rule: allow
+        port: "{{ ssh_port }}"
+        proto: tcp
+        comment: "{{ ssh_block_comment }} ({{ ssh_port }})"
+
+    # Port 22 stays open while the connection is still coming in on it, so the
+    # run cannot lock itself out before the new port is known to work. As soon
+    # as you connect on ssh_port, this stops adding the rule and the old port
+    # is gone from the next run onwards.
+    - name: Keep port 22 open until the move has happened
+      community.general.ufw:
+        rule: allow
+        port: "22"
+        proto: tcp
+        comment: "{{ ssh_block_comment }} (old port)"
+      when: ansible_port | default(22, true) | string != ssh_port | string
+
+    - name: Allow application TCP ports
+      community.general.ufw:
+        rule: allow
+        port: "{{ item }}"
+        proto: tcp
+        comment: application
+      loop: "{{ application_tcp_ports }}"
+      loop_control:
+        label: "{{ item }}"
+
+    - name: Allow application UDP ports
+      community.general.ufw:
+        rule: allow
+        port: "{{ item }}"
+        proto: udp
+        comment: application
+      loop: "{{ application_udp_ports }}"
+      loop_control:
+        label: "{{ item }}"
+
+    - name: Enable UFW
+      community.general.ufw:
+        state: enabled
+        logging: "on"
+
+    - name: Read the active rule set
+      ansible.builtin.command: ufw status verbose
+      register: ufw_status
+      changed_when: false
+
+    - name: Report the firewall state
+      ansible.builtin.debug:
+        msg: "{{ ufw_status.stdout_lines }}"

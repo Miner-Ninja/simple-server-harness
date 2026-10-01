@@ -1,0 +1,63 @@
+---
+- name: User account
+  hosts: all
+  become: true
+  tasks:
+    - name: Ensure the sudo group exists
+      ansible.builtin.group:
+        name: sudo
+        state: present
+
+    # openssl ships with Ubuntu and hashes on the target, so the machine you
+    # run from needs neither passlib nor Python's crypt module (gone since 3.13).
+    - name: Generate the password hash
+      ansible.builtin.command: openssl passwd -6 -stdin
+      args:
+        stdin: "{{ vault_server_password }}"
+      register: server_password_hash
+      changed_when: false
+      no_log: true
+
+    - name: Create the user
+      ansible.builtin.user:
+        name: "{{ server_user }}"
+        password: "{{ server_password_hash.stdout }}"
+        # The password is applied when the account is created. On an existing
+        # account it is left alone; change it by hand or delete the account.
+        update_password: on_create
+        groups: sudo
+        append: true
+        shell: /bin/bash
+        create_home: true
+        state: present
+      register: server_user_state
+
+    - name: Grant password-confirmed sudo rights
+      ansible.builtin.copy:
+        dest: "/etc/sudoers.d/00-{{ server_user }}"
+        content: "{{ server_user }} ALL=(ALL:ALL) ALL\n"
+        owner: root
+        group: root
+        mode: "0440"
+        validate: "visudo -cf %s"
+
+    - name: Ensure the .ssh directory exists
+      ansible.builtin.file:
+        path: "/home/{{ server_user }}/.ssh"
+        state: directory
+        owner: "{{ server_user }}"
+        group: "{{ server_user }}"
+        mode: "0700"
+
+    - name: Authorise the SSH key
+      ansible.posix.authorized_key:
+        user: "{{ server_user }}"
+        key: "{{ lookup('file', server_ssh_public_key_file) | trim }}"
+        state: present
+
+    - name: Report user status
+      ansible.builtin.debug:
+        msg:
+          - "User:    {{ server_user }} ({{ 'created' if server_user_state.changed else 'already existed' }})"
+          - "Sudo:    password-confirmed"
+          - "SSH key: installed"

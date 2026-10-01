@@ -1,0 +1,68 @@
+# ============================================
+# SECRETS - DO NOT COMMIT
+# ============================================
+
+# Encrypted vault (contains credentials)
+group_vars/all/vault.yml
+
+# Vault password
+vault_pass.txt
+.vault_pass
+*.vault_pass
+
+# SSH keys
+*.pem
+*.priv
+*.key
+id_rsa*
+id_ed25519*
+*.ppk
+
+# ============================================
+# ANSIBLE
+# ============================================
+
+*.retry
+
+# ============================================
+# AI TOOLING - never commit
+# ============================================
+
+.claude/
+.codex/
+.cursor/
+.aider/
+.continue/
+.windsurf/
+CLAUDE.md
+AGENTS.md
+GEMINI.md
+
+# ============================================
+# IDE & EDITORS
+# ============================================
+
+.vscode/
+.idea/
+*.iml
+*.swp
+*.swo
+*~
+.DS_Store
+
+# ============================================
+# LOGS & TEMPORARY
+# ============================================
+
+*.log
+logs/
+tmp/
+*.tmp
+*.bak
+*.backup
+*.tar
+*.tar.gz
+*.tgz
+*.zip
+backup/
+backups/

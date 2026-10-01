@@ -1,0 +1,59 @@
+---
+# The system-wide daemon. Every docker command goes through sudo: the user
+# account is kept out of the docker group, because that group is root without
+# a password.
+- name: Install Docker (system-wide)
+  hosts: all
+  become: true
+  vars:
+    docker_daemon_config:
+      storage-driver: overlay2
+      log-driver: json-file
+      log-opts:
+        max-size: 10m
+        max-file: "3"
+  tasks:
+    - name: Skip when Docker is not wanted or should run as {{ server_user }}
+      ansible.builtin.meta: end_play
+      when: not (install_docker | bool) or (docker_rootless | bool)
+
+    - name: Set up the Docker repository and packages
+      ansible.builtin.import_tasks: docker-common.yml
+
+    - name: Configure the daemon
+      ansible.builtin.copy:
+        content: "{{ docker_daemon_config | to_nice_json }}\n"
+        dest: /etc/docker/daemon.json
+        owner: root
+        group: root
+        mode: "0644"
+      notify: Restart docker
+
+    - name: Enable and start Docker
+      ansible.builtin.systemd_service:
+        name: docker
+        state: started
+        enabled: true
+
+    - name: Read the installed versions
+      ansible.builtin.command: "{{ item }}"
+      register: docker_versions
+      changed_when: false
+      loop:
+        - docker --version
+        - docker-compose version
+
+    - name: Report the installation
+      ansible.builtin.debug:
+        msg:
+          - "{{ docker_versions.results[0].stdout }}"
+          - "{{ docker_versions.results[1].stdout }}"
+          - "Log rotation: 10 MB x 3 files, storage driver overlay2"
+          - "The daemon runs as root, so every command needs sudo: sudo docker ps"
+          - "{{ server_user }} is not in the docker group, so sudo is required"
+
+  handlers:
+    - name: Restart docker
+      ansible.builtin.systemd_service:
+        name: docker
+        state: restarted

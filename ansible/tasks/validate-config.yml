@@ -1,0 +1,124 @@
+---
+- name: Validate configuration
+  hosts: all
+  gather_facts: false
+  tasks:
+    - name: Ensure every required variable is present and non-empty
+      ansible.builtin.assert:
+        quiet: true
+        that:
+          - use_sudo_ws is defined
+          - install_docker is defined
+          - docker_rootless is defined
+          - timezone is defined and timezone | length > 0
+          - swap_size is defined and swap_size | length > 0
+          - swappiness is defined
+          - ssh_max_auth_tries is defined
+          - ssh_login_grace_time is defined
+          - ssh_client_alive_interval is defined
+          - ssh_client_alive_count_max is defined
+          - extra_firewall_tcp_ports is defined
+          - extra_firewall_udp_ports is defined
+          - fail2ban_bantime is defined
+          - fail2ban_findtime is defined
+          - fail2ban_maxretry is defined
+          - fail2ban_ignore_ip is defined and fail2ban_ignore_ip | length > 0
+          - auto_reboot is defined
+          - update_timeout is defined
+        fail_msg: >-
+          group_vars/all/vars.yml is incomplete. Fill in every value first.
+
+    # Worth its own message: a typo here stays text, and text looks filled in.
+    - name: Make sure the switches are a real yes or no
+      ansible.builtin.assert:
+        quiet: true
+        that:
+          - use_sudo_ws is boolean
+          - install_docker is boolean
+          - docker_rootless is boolean
+        fail_msg: >-
+          use_sudo_ws, install_docker and docker_rootless have to be true or
+          false, not text. Check group_vars/all/vars.yml.
+
+    # Nothing picks this for you: the check only reports a choice that cannot
+    # work, before the cryptic timeout in the first task that needs root.
+    - name: Ask the sudo we would escalate with to identify itself
+      ansible.builtin.shell: "{{ ansible_become_exe }} --version"
+      register: chosen_sudo
+      changed_when: false
+      failed_when: false
+
+    - name: Make sure it is the classic sudo
+      ansible.builtin.assert:
+        quiet: true
+        that:
+          - chosen_sudo.rc == 0
+          - "'Sudo version' in chosen_sudo.stdout"
+        fail_msg: >-
+          {{ ansible_become_exe }} is missing or is not the classic sudo, so no
+          task could gain root. On Ubuntu 25.10 and newer set use_sudo_ws to
+          true, on 24.04 and older to false.
+
+    - name: Ensure every required secret is present and non-empty
+      ansible.builtin.assert:
+        quiet: true
+        that:
+          - vault_server_host is defined and vault_server_host | length > 0
+          - vault_ssh_private_key_file is defined and vault_ssh_private_key_file | length > 0
+          - vault_server_user is defined and vault_server_user | length > 0
+          - vault_server_ssh_public_key_file is defined and vault_server_ssh_public_key_file | length > 0
+          - vault_ansible_port is defined and vault_ansible_port | string | length > 0
+          - vault_ssh_port is defined and vault_ssh_port | string | length > 0
+          - vault_server_password is defined and vault_server_password | length > 0
+          - vault_fail2ban_dest_email is defined and vault_fail2ban_dest_email | length > 0
+          - vault_fail2ban_sender is defined and vault_fail2ban_sender | length > 0
+        fail_msg: >-
+          group_vars/all/vault.yml is missing or incomplete. Create it from
+          vault_template.yml.
+
+    # The key is read from that file later in the run, so a wrong path would
+    # only surface halfway through. Catch it here instead.
+    - name: Look for the key file
+      ansible.builtin.stat:
+        path: "{{ server_ssh_public_key_file }}"
+      delegate_to: localhost
+      become: false
+      register: ssh_key_file
+
+    - name: Stop if the key file is not there
+      ansible.builtin.assert:
+        quiet: true
+        that: ssh_key_file.stat.exists
+        fail_msg: >-
+          Nothing at {{ server_ssh_public_key_file }}. Put the full path of
+          your public key there - the short file ending in .pub.
+
+    - name: Ensure the settings point at a real server
+      ansible.builtin.assert:
+        quiet: true
+        that:
+          - ansible_host is defined
+          - ansible_host not in ['203.0.113.10', 'localhost', '127.0.0.1']
+        fail_msg: >-
+          group_vars/all/vault.yml still holds the example address. Put the
+          real server address in vault_server_host.
+
+    - name: Ensure the connection account is the one named in the settings
+      ansible.builtin.assert:
+        quiet: true
+        that:
+          - ansible_user == server_user or ansible_user == 'root'
+        fail_msg: >-
+          inventory.yml logs in as {{ ansible_user }} but server_user is
+          {{ server_user }}. They have to match - root is allowed for a first run.
+
+    - name: Report validated target
+      ansible.builtin.debug:
+        msg:
+          - "Target:      {{ ansible_host }}:{{ ansible_port }} as {{ ansible_user }}"
+          - "User:        {{ server_user }}"
+          - "Escalation:  {{ ansible_become_exe }}"
+          - "SSH port:    {{ ansible_port }} now -> {{ ssh_port }} after hardening"
+          - "Timezone:    {{ timezone }}"
+          - "Swap:        {{ swap_size }}, swappiness {{ swappiness }}"
+          - "Auto reboot: {{ auto_reboot }}"
