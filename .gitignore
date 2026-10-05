@@ -10,6 +10,10 @@ vault_pass.txt
 .vault_pass
 *.vault_pass
 
+# Environment files - never commit, they hold passwords
+.env
+.env.*
+
 # SSH keys
 *.pem
 *.priv
@@ -28,6 +32,7 @@ id_ed25519*
 # AI TOOLING - never commit
 # ============================================
 
+.pi/
 .claude/
 .codex/
 .cursor/
