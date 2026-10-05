@@ -14,8 +14,8 @@ all:
   hosts:
     server:
       ansible_host: "{{ vault_server_host }}"
-      ansible_port: "{{ vault_ansible_port }}"
+      ansible_port: "{{ vault_ssh_default_port }}"
       ansible_user: "{{ server_user }}"
-      ansible_ssh_private_key_file: "{{ vault_ssh_private_key_file }}"
+      ansible_ssh_private_key_file: "{{ vault_private_key_file }}"
   vars:
     ansible_python_interpreter: /usr/bin/python3

@@ -26,8 +26,8 @@ simple-server-harness/
 ├── ansible.cfg                  # inventory path, SSH options
 ├── inventory.yml                # points at the vault; nothing to fill in
 ├── group_vars/all/vars.yml      # all settings
+├── group_vars/all/vault_template.tpl  # the same values, as a template
 ├── group_vars/all/vault.yml     # address, account, ports, keys, passwords - encrypted
-├── vault_template.yml           # template for vault.yml
 ├── LICENSE                      # MIT
 └── ansible/
     ├── ansible-tasks.yml        # entry point, runs everything in order
@@ -61,10 +61,10 @@ simple-server-harness/
    ```
 
    It asks for a password and then opens an editor. Copy the values from
-   `vault_template.yml` and fill them in — the vault holds the server
-   address, the port it connects on and the port SSH moves to, the private
-   key to connect with, the account name, the path to your public key, the
-   login password and the notification addresses.
+   `vault_template.tpl` and fill them in — the vault holds the server
+   address, the port it connects on and the port SSH moves to, the key to
+   connect with, the account name, the login password and the notification
+   addresses.
 
 4. Run it, from the repository root:
 
@@ -73,7 +73,7 @@ simple-server-harness/
    ```
 
 5. The first run moves SSH to the new port. Put that same port into
-   `vault_ansible_port` in the vault before the next run. Port 22 stays open
+   `vault_ssh_default_port` in the vault before the next run. Port 22 stays open
    until then, so the first run cannot lock itself out, and closes by itself
    on the run after you have moved over.
 
@@ -102,23 +102,24 @@ The values that would tell an attacker where to aim are in the encrypted
 vault instead:
 
 - `vault_server_host` — the address Ansible connects to
-- `vault_ansible_port` — the port it connects on now, 22 on a fresh server
-- `vault_ssh_port` — the port sshd moves to; the same value goes into
-  `vault_ansible_port` once the first run has moved it
-- `vault_ssh_private_key_file` — the private key to connect with, the file
+- `vault_ssh_default_port` — the port it connects on now, 22 on a fresh server
+- `vault_ssh_remaped_port` — the port sshd moves to; the same value goes into
+  `vault_ssh_default_port` once the first run has moved it
+- `vault_private_key_file` — the private key Ansible connects with; the file
   without `.pub`
+- `vault_public_key_file` — the public half, the `.pub` file; it is what gets
+  installed on the server
 - `vault_server_user` — the account that will exist on the server: sudo, the
   SSH key, sshd `AllowUsers`
-- `vault_server_ssh_public_key_file` — your public key here, on the machine
-  you run Ansible from
 - `vault_server_password` — its login password. Sudo asks for the same one, so
   there is no separate `become` password
 - `vault_fail2ban_dest_email`, `vault_fail2ban_sender` — where Fail2Ban sends
   its notices
 
-The vault template sits in the repository root, not in `group_vars/`. Files
-there are read in alphabetical order and the last one wins, so a plaintext
-template would quietly override the real vault.
+The template for the vault lies next to it, under the name
+`vault_template.tpl`. The `.tpl` on the end is what keeps it harmless: only
+files with a YAML extension are read from that directory, and a template read
+after the vault would override the real secrets with its placeholders.
 
 ## Adding an application
 
@@ -185,7 +186,7 @@ Against throwaway Ubuntu 24.04 and 26.04 containers on ansible-core 2.21:
 - Fail2Ban came up with the `sshd` and `portscan` jails, and a ban was followed
   end to end: failed logins, the ban, the rule appearing in the firewall, and
   the banned address refused afterwards.
-- A path in `vault_server_ssh_public_key_file` that points at nothing stops the run
+- A path in `vault_public_key_file` that points at nothing stops the run
   before it touches the server.
 - Swap: create, format, activate and `/etc/fstab` all worked, and a second run
   changed nothing.

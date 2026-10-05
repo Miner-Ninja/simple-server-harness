@@ -64,17 +64,17 @@
         quiet: true
         that:
           - vault_server_host is defined and vault_server_host | length > 0
-          - vault_ssh_private_key_file is defined and vault_ssh_private_key_file | length > 0
+          - vault_private_key_file is defined and vault_private_key_file | length > 0
+          - vault_public_key_file is defined and vault_public_key_file | length > 0
           - vault_server_user is defined and vault_server_user | length > 0
-          - vault_server_ssh_public_key_file is defined and vault_server_ssh_public_key_file | length > 0
-          - vault_ansible_port is defined and vault_ansible_port | string | length > 0
-          - vault_ssh_port is defined and vault_ssh_port | string | length > 0
+          - vault_ssh_default_port is defined and vault_ssh_default_port | string | length > 0
+          - vault_ssh_remaped_port is defined and vault_ssh_remaped_port | string | length > 0
           - vault_server_password is defined and vault_server_password | length > 0
           - vault_fail2ban_dest_email is defined and vault_fail2ban_dest_email | length > 0
           - vault_fail2ban_sender is defined and vault_fail2ban_sender | length > 0
         fail_msg: >-
           group_vars/all/vault.yml is missing or incomplete. Create it from
-          vault_template.yml.
+          group_vars/all/vault_template.tpl.
 
     # The key is read from that file later in the run, so a wrong path would
     # only surface halfway through. Catch it here instead.
@@ -90,8 +90,9 @@
         quiet: true
         that: ssh_key_file.stat.exists
         fail_msg: >-
-          Nothing at {{ server_ssh_public_key_file }}. Put the full path of
-          your public key there - the short file ending in .pub.
+          Nothing at {{ server_ssh_public_key_file }}. Put the path of your
+          public key there - the short file ending in .pub. It is
+          vault_public_key_file in the vault.
 
     - name: Ensure the settings point at a real server
       ansible.builtin.assert:
