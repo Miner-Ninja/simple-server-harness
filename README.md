@@ -92,7 +92,7 @@ The settings you fill in sit in `group_vars/all/vars.yml`:
 | `swap_size`, `swappiness` | Swap file size, `/proc/sys/vm/swappiness` |
 | `install_docker` | `false` skips Docker entirely, for a server that runs nothing containerised |
 | `docker_rootless` | `false`: system daemon, docker commands need sudo. `true`: daemon runs as `server_user`, no sudo. Ignored when `install_docker` is `false` |
-| `extra_firewall_tcp_ports`, `extra_firewall_udp_ports` | Ports to open for applications, comma-separated on one line: `8080, 5432`. An empty line means no ports |
+| `extra_firewall_tcp_ports`, `extra_firewall_udp_ports` | Extra ports to open, comma-separated on one line: `8080, 5432`. An empty line means no ports |
 | `fail2ban_bantime`, `fail2ban_findtime`, `fail2ban_maxretry` | Ban policy |
 | `fail2ban_ignore_ip` | Networks that are never banned |
 | `auto_reboot` | Reboot when updates require it |
@@ -120,23 +120,6 @@ The template for the vault lies next to it, under the name
 `vault_template.tpl`. The `.tpl` on the end is what keeps it harmless: only
 files with a YAML extension are read from that directory, and a template read
 after the vault would override the real secrets with its placeholders.
-
-## Adding an application
-
-1. Put its playbook in `ansible/tasks/apps/`.
-2. Add its ports to `extra_firewall_tcp_ports` / `extra_firewall_udp_ports` in
-   `group_vars/all/vars.yml` — comma-separated on one line, for example
-   `8080, 5432`. The application must not touch UFW itself:
-   `firewall-config.yml` rebuilds the rule set on every run.
-3. Import it in `ansible/ansible-tasks.yml`, between the base tasks.
-
-Three things to keep in mind:
-
-- Container applications go after `docker-install.yml`.
-- SSH hardening stays last. It moves the port, so nothing may come after it
-  that has to dial the old one.
-- `system-update.yml` can reboot the server. It runs while SSH is still on
-  the port it was reached on, so the connection stays predictable.
 
 ## Notes
 
@@ -166,35 +149,6 @@ Three things to keep in mind:
   the daemon, so `Port` in `sshd_config` alone does nothing. `ssh-config.yml`
   writes it to both. It restarts the socket instead of stopping it, because
   stopping takes the service down and cuts the connection doing the work.
-
-## Tested
-
-Against throwaway Ubuntu 24.04 and 26.04 containers on ansible-core 2.21:
-
-- Full runs finished green on both. A second run over the new port changed
-  nothing except the firewall and the update log, which rewrite themselves.
-- SSH ended up on 22222 with root login and passwords off and `AllowUsers`
-  limited to the one account: that account could log in on the new port, root
-  could not. Port 22 stayed open through the first run and was gone from the
-  firewall after the second, with no setting to flip by hand.
-- With the port left at 22, nothing moves. The daemon keeps listening on both
-  address families, port 22 keeps its single rule, and the closing report says
-  there is nothing to change.
-- UFW came up with exactly the configured ports: adding one to
-  `extra_firewall_tcp_ports` opened it, taking it out closed it, and an empty
-  line opened nothing.
-- Fail2Ban came up with the `sshd` and `portscan` jails, and a ban was followed
-  end to end: failed logins, the ban, the rule appearing in the firewall, and
-  the banned address refused afterwards.
-- A path in `vault_public_key_file` that points at nothing stops the run
-  before it touches the server.
-- Swap: create, format, activate and `/etc/fstab` all worked, and a second run
-  changed nothing.
-- Docker, both modes. `rootful`: the daemon started on overlay2 with log
-  rotation, both commands answered, plain `docker ps` as the user account was
-  refused and `sudo docker ps` worked. `rootless`: the system-wide daemon was
-  left disabled, the daemon came up as the user account and reported itself as
-  rootless, and containers ran as that account with no sudo anywhere.
 
 ## License
 

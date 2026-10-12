@@ -6,8 +6,8 @@
     ssh_block_comment: "SSH access"
     # The settings are written as one comma-separated line, so turn them into
     # a list here. An empty line means no ports.
-    application_tcp_ports: "{{ (extra_firewall_tcp_ports | default('', true) | string).split(',') | map('trim') | select | list }}"
-    application_udp_ports: "{{ (extra_firewall_udp_ports | default('', true) | string).split(',') | map('trim') | select | list }}"
+    extra_tcp_ports: "{{ (extra_firewall_tcp_ports | default('', true) | string).split(',') | map('trim') | select | list }}"
+    extra_udp_ports: "{{ (extra_firewall_udp_ports | default('', true) | string).split(',') | map('trim') | select | list }}"
   tasks:
     - name: Wait for the apt lock to be released
       ansible.builtin.shell: |
@@ -61,23 +61,23 @@
         comment: "{{ ssh_block_comment }} (old port)"
       when: ansible_port | default(22, true) | string != ssh_port | string
 
-    - name: Allow application TCP ports
+    - name: Allow extra TCP ports
       community.general.ufw:
         rule: allow
         port: "{{ item }}"
         proto: tcp
-        comment: application
-      loop: "{{ application_tcp_ports }}"
+        comment: extra
+      loop: "{{ extra_tcp_ports }}"
       loop_control:
         label: "{{ item }}"
 
-    - name: Allow application UDP ports
+    - name: Allow extra UDP ports
       community.general.ufw:
         rule: allow
         port: "{{ item }}"
         proto: udp
-        comment: application
-      loop: "{{ application_udp_ports }}"
+        comment: extra
+      loop: "{{ extra_udp_ports }}"
       loop_control:
         label: "{{ item }}"
 

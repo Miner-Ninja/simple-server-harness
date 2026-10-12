@@ -28,7 +28,9 @@
       - { key: ClientAliveInterval, value: "{{ ssh_client_alive_interval }}" }
       - { key: ClientAliveCountMax, value: "{{ ssh_client_alive_count_max }}" }
       - { key: X11Forwarding, value: "no" }
-      - { key: AllowTcpForwarding, value: "no" }
+      # "local" allows ssh -L tunnels to services bound to loopback; remote
+      # (-R) and dynamic (-D) forwarding stay off.
+      - { key: AllowTcpForwarding, value: "local" }
       - { key: AllowAgentForwarding, value: "no" }
       - { key: StrictModes, value: "yes" }
       - { key: Ciphers, value: "aes256-gcm@openssh.com,chacha20-poly1305@openssh.com,aes256-ctr,aes192-ctr,aes128-ctr" }
