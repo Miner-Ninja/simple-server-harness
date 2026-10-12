@@ -19,3 +19,28 @@
 - import_playbook: tasks/fail2ban-config.yml
 - import_playbook: tasks/system-update.yml
 - import_playbook: tasks/ssh-config.yml
+
+# Last, always. Each part of the run catches its own failures so the rest can
+# continue, and records them; they are listed here in one place, after
+# everything that could be done has been done. Only here does the run end as
+# failed, so a red result always means the work above still happened.
+- name: Report what did not go through
+  hosts: all
+  gather_facts: false
+  tasks:
+    - name: Say everything went through
+      ansible.builtin.debug:
+        msg: "Everything went through."
+      when: (harness_failures | default([])) | length == 0
+
+    - name: List the parts that did not go through
+      ansible.builtin.debug:
+        msg: "Did not go through: {{ harness_failures | join(', ') }}"
+      when: (harness_failures | default([])) | length > 0
+
+    - name: Mark the run failed, with everything else already applied
+      ansible.builtin.fail:
+        msg: >-
+          These parts did not go through: {{ harness_failures | join(', ') }}.
+          Everything else was applied - fix the cause and run again.
+      when: (harness_failures | default([])) | length > 0

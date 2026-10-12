@@ -9,6 +9,11 @@
   become: true
   vars:
     ssh_config: /etc/ssh/sshd_config
+    # sshd keeps the first value it reads for most settings, and it reads this
+    # directory near the top of the main file. A cloud image ships
+    # 50-cloud-init.conf with "PasswordAuthentication yes", which overrides the
+    # copy of the setting further down the main file. A lower number wins.
+    ssh_config_dropin: /etc/ssh/sshd_config.d/00-harness.conf
     ssh_socket_unit: ssh.socket
     ssh_socket_dropin: /etc/systemd/system/ssh.socket.d/10-port.conf
     ssh_service_unit: "{{ ssh_socket_unit if ssh_socket_active | default(false) | bool else 'ssh' }}"
@@ -45,6 +50,17 @@
         force: false
         mode: "0600"
 
+    # sshd refuses to check a config when this is missing, and the day's
+    # directory is empty on a fresh boot. Everything below validates against
+    # the file it writes, so the directory has to exist first.
+    - name: Ensure the privilege separation directory exists
+      ansible.builtin.file:
+        path: /run/sshd
+        state: directory
+        owner: root
+        group: root
+        mode: "0755"
+
     - name: Apply the hardening directives
       ansible.builtin.lineinfile:
         path: "{{ ssh_config }}"
@@ -66,6 +82,29 @@
         validate: "sshd -t -f %s"
       when: ssh_allowed_users | length > 0
       register: ssh_allowusers
+
+    # The main file is not enough on its own. Ubuntu cloud images drop their own
+    # file into sshd_config.d, and sshd takes the first value it reads - so the
+    # settings above, written below the folder's inclusion, lose. The same
+    # settings written here, under a lower number, are read first and win.
+    - name: Write the hardening where it is read first
+      ansible.builtin.copy:
+        dest: "{{ ssh_config_dropin }}"
+        owner: root
+        group: root
+        mode: "0644"
+        content: |
+          # Managed by simple-server-harness. Do not edit by hand.
+          #
+          # Read before anything the image ships, so these values win.
+          {% for option in ssh_options %}
+          {{ option.key }} {{ option.value }}
+          {% endfor %}
+          {% if ssh_allowed_users | length > 0 %}
+          AllowUsers {{ ssh_allowed_users | join(' ') }}
+          {% endif %}
+        validate: "sshd -t -f %s"
+      register: ssh_config_dropin_state
 
     - name: Find out whether sshd is started by a systemd socket
       ansible.builtin.command: systemctl is-enabled {{ ssh_socket_unit }}
@@ -113,14 +152,6 @@
       when: ssh_socket_active | bool
       register: ssh_socket_dropin_state
 
-    - name: Ensure the privilege separation directory exists
-      ansible.builtin.file:
-        path: /run/sshd
-        state: directory
-        owner: root
-        group: root
-        mode: "0755"
-
     - name: Check the resulting configuration
       ansible.builtin.command: sshd -t
       changed_when: false
@@ -130,6 +161,7 @@
         ssh_config_changed: >-
           {{ (ssh_directives is changed)
              or (ssh_allowusers is changed)
+             or (ssh_config_dropin_state is changed)
              or (ssh_socket_dropin_state is changed) }}
 
     - name: Make sure sshd is enabled and running
@@ -146,6 +178,26 @@
         state: restarted
         daemon_reload: true
       when: ssh_config_changed | bool
+
+    # Reads back what sshd will actually do, rather than trusting that writing
+    # the settings was enough: a cloud image's own file is what shipped this
+    # file with password logins still open.
+    - name: Ask sshd what it will actually do
+      ansible.builtin.command: sshd -T
+      register: ssh_effective
+      changed_when: false
+
+    - name: Insist that passwords are really off
+      ansible.builtin.assert:
+        quiet: true
+        that:
+          - "'passwordauthentication no' in (ssh_effective.stdout | lower)"
+          - "'permitrootlogin no' in (ssh_effective.stdout | lower)"
+          - "'pubkeyauthentication yes' in (ssh_effective.stdout | lower)"
+        fail_msg: >-
+          sshd would still accept something it should not. Something in
+          /etc/ssh/sshd_config.d/ is read before the hardening - check those
+          files, lowest number first.
 
     # Probes the port you will use next, so a missing port forward shows up.
     - name: Confirm SSH answers on the hardened port
