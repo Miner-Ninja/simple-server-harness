@@ -19,9 +19,3 @@
 - import_playbook: tasks/fail2ban-config.yml
 - import_playbook: tasks/system-update.yml
 - import_playbook: tasks/ssh-config.yml
-
-# Applications live in ansible/tasks/apps/ and get imported here, between the
-# base tasks above. They do not open their own firewall ports: add those to
-# extra_firewall_tcp_ports / extra_firewall_udp_ports in group_vars/all/vars.yml.
-#
-# - import_playbook: tasks/apps/example.yml

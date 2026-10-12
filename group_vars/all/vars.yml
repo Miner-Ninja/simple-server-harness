@@ -51,7 +51,7 @@ install_docker: true
 # password.
 docker_rootless: false
 
-# --- Application ports --------------------------------------------------
+# --- Extra ports --------------------------------------------------------
 extra_firewall_tcp_ports:
 extra_firewall_udp_ports:
 
