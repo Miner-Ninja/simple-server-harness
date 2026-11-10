@@ -11,6 +11,15 @@
 # the private key is the one Ansible connects with, the public one is what gets
 # installed on the server.
 vault_server_host: "203.0.113.10"
+
+# The static hostname the machine gets. The harness also stops cloud-init from
+# putting the provider's default back after a reboot.
+vault_server_hostname: "server1"
+
+# The account Ansible logs in as. On a fresh server that is root, because the
+# real account does not exist yet. After the first run set this to the account
+# name from vault_server_user, so the same command keeps working.
+vault_ssh_login_user: "root"
 vault_private_key_file: "/home/you/.ssh/id_ed25519"
 vault_public_key_file: "/home/you/.ssh/id_ed25519.pub"
 
@@ -21,7 +30,7 @@ vault_ssh_default_port: 22
 vault_ssh_remaped_port: 22222
 
 # The account that will exist on the server.
-vault_server_user: "admin"
+vault_server_user: "user"
 
 # Login password of that account. SSH is key-only, so this is for console
 # access and for sudo.

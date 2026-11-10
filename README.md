@@ -9,6 +9,7 @@ you can reach over SSH. It does not create one.
 | Playbook | Result |
 |----------|--------|
 | `validate-config.yml` | Stops the run if settings or secrets are missing |
+| `hostname-config.yml` | Static hostname, kept across reboots |
 | `time-zone-config.yml` | System timezone |
 | `swap-config.yml` | Swap file, `/etc/fstab`, `vm.swappiness` |
 | `user-config.yml` | User with sudo, password, SSH key |
@@ -48,9 +49,9 @@ simple-server-harness/
 
 ## Quick start
 
-1. `inventory.yml` holds nothing of yours at all: the address, the port and
-   the private key it connects with come from the vault, the login name from
-   the settings. There is nothing to edit there.
+1. `inventory.yml` holds nothing of yours at all: the address, the port, the
+   private key it connects with and the login name all come from the vault.
+   There is nothing to edit there.
 
 2. `group_vars/all/vars.yml`: the settings. The run stops if anything is empty.
 
@@ -62,9 +63,9 @@ simple-server-harness/
 
    It asks for a password and then opens an editor. Copy the values from
    `vault_template.tpl` and fill them in — the vault holds the server
-   address, the port it connects on and the port SSH moves to, the key to
-   connect with, the account name, the login password and the notification
-   addresses.
+   address, the hostname, the login name it connects as, the port it connects
+   on and the port SSH moves to, the key to connect with, the account name,
+   the login password and the notification addresses.
 
 4. Run it, from the repository root:
 
@@ -72,13 +73,11 @@ simple-server-harness/
    ansible-playbook ansible/ansible-tasks.yml --ask-vault-pass -e ansible_user=root
    ```
 
-5. The first run moves SSH to the new port. Put that same port into
-   `vault_ssh_default_port` in the vault before the next run. Port 22 stays open
-   until then, so the first run cannot lock itself out, and closes by itself
-   on the run after you have moved over.
-
-If you log in as `root` because the user does not exist yet, run the
-first pass with `-e ansible_user=root`.
+5. The first run moves SSH to the new port and creates the account. Before the
+   next run, set `vault_ssh_default_port` to that port and
+   `vault_ssh_login_user` to the account name. Port 22 stays open until then,
+   so the first run cannot lock itself out, and closes by itself on the run
+   after you have moved over.
 
 ## Settings
 
@@ -102,6 +101,9 @@ The values that would tell an attacker where to aim are in the encrypted
 vault instead:
 
 - `vault_server_host` — the address Ansible connects to
+- `vault_server_hostname` — the static hostname of the server
+- `vault_ssh_login_user` — the account Ansible logs in as: `root` on a fresh
+  server, the account name after the first run
 - `vault_ssh_default_port` — the port it connects on now, 22 on a fresh server
 - `vault_ssh_remaped_port` — the port sshd moves to; the same value goes into
   `vault_ssh_default_port` once the first run has moved it

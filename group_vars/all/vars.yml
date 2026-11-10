@@ -79,6 +79,7 @@ update_timeout: 600
 # Set in group_vars/all/vault.yml instead, so that a published copy does not
 # hand out the login name, the port or your home path.
 server_user: "{{ vault_server_user }}"
+server_hostname: "{{ vault_server_hostname }}"
 ssh_port: "{{ vault_ssh_remaped_port }}"
 server_ssh_public_key_file: "{{ vault_public_key_file }}"
 
