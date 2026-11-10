@@ -25,6 +25,7 @@
           - fail2ban_ignore_ip is defined and fail2ban_ignore_ip | length > 0
           - auto_reboot is defined
           - update_timeout is defined
+          - server_hostname is defined and server_hostname | length > 0
         fail_msg: >-
           group_vars/all/vars.yml is incomplete. Fill in every value first.
 
@@ -64,6 +65,8 @@
         quiet: true
         that:
           - vault_server_host is defined and vault_server_host | length > 0
+          - vault_server_hostname is defined and vault_server_hostname | length > 0
+          - vault_ssh_login_user is defined and vault_ssh_login_user | length > 0
           - vault_private_key_file is defined and vault_private_key_file | length > 0
           - vault_public_key_file is defined and vault_public_key_file | length > 0
           - vault_server_user is defined and vault_server_user | length > 0
@@ -118,6 +121,7 @@
         msg:
           - "Target:      {{ ansible_host }}:{{ ansible_port }} as {{ ansible_user }}"
           - "User:        {{ server_user }}"
+          - "Hostname:    {{ server_hostname }}"
           - "Escalation:  {{ ansible_become_exe }}"
           - "SSH port:    {{ ansible_port }} now -> {{ ssh_port }} after hardening"
           - "Timezone:    {{ timezone }}"

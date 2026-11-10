@@ -1,0 +1,52 @@
+---
+- name: Configure hostname
+  hosts: all
+  become: true
+  tasks:
+    - name: Read the current static hostname
+      ansible.builtin.command: hostnamectl --static
+      register: hostname_current
+      changed_when: false
+
+    - name: Set the static hostname
+      ansible.builtin.command: "hostnamectl set-hostname {{ server_hostname }}"
+      when: hostname_current.stdout | trim != server_hostname
+
+    # Cloud images re-read the provider's hostname on every boot and would put
+    # the old one back. Files in cloud.cfg.d are read in name order, so this
+    # one is applied after the provider's own settings and wins.
+    - name: Look for cloud-init
+      ansible.builtin.stat:
+        path: /etc/cloud
+      register: cloud_init_dir
+      changed_when: false
+
+    - name: Keep cloud-init from resetting the hostname on boot
+      ansible.builtin.copy:
+        dest: /etc/cloud/cloud.cfg.d/99-preserve-hostname.cfg
+        content: "preserve_hostname: true\n"
+        owner: root
+        group: root
+        mode: "0644"
+      when: cloud_init_dir.stat.exists
+
+    # cloud-init rebuilds /etc/hosts from a template that uses the hostname, so
+    # this line is also what the next boot writes. Setting it now makes the
+    # name resolve immediately.
+    - name: Point the hostname at 127.0.1.1
+      ansible.builtin.lineinfile:
+        path: /etc/hosts
+        regexp: '^127\.0\.1\.1\s'
+        line: "127.0.1.1 {{ server_hostname }} {{ server_hostname }}"
+        state: present
+
+    - name: Read the hostname back
+      ansible.builtin.command: hostnamectl --static
+      register: hostname_after
+      changed_when: false
+
+    - name: Verify the hostname
+      ansible.builtin.assert:
+        that: hostname_after.stdout | trim == server_hostname
+        fail_msg: "Hostname is {{ hostname_after.stdout | trim }} instead of {{ server_hostname }}"
+        success_msg: "Hostname is {{ server_hostname }}"

@@ -7,6 +7,7 @@
 # the server, which is safe while SSH is still on the inventory port.
 
 - import_playbook: tasks/validate-config.yml
+- import_playbook: tasks/hostname-config.yml
 - import_playbook: tasks/time-zone-config.yml
 - import_playbook: tasks/swap-config.yml
 - import_playbook: tasks/user-config.yml
