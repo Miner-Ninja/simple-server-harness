@@ -69,7 +69,7 @@ simple-server-harness/
 4. Run it, from the repository root:
 
    ```bash
-   ansible-playbook ansible/ansible-tasks.yml --ask-vault-pass
+   ansible-playbook ansible/ansible-tasks.yml --ask-vault-pass -e ansible_user=root
    ```
 
 5. The first run moves SSH to the new port. Put that same port into
